@@ -2,6 +2,30 @@
 
 Repositório público com habilidades especializadas para agentes de codificação de IA (**Claude Code**, **Antigravity**, **Cursor**, etc.), construídas com rigor metodológico e **zero ruído corporativo**.
 
+Compatível nativamente com o padrão aberto do **[skills.sh](https://skills.sh/)** e o CLI `npx skills`.
+
+---
+
+## 🚀 Como Instalar com `npx skills` (Padrão Oficial)
+
+Você pode instalar qualquer skill diretamente em qualquer projeto com um único comando:
+
+### Instalar no projeto atual:
+```bash
+npx skills add artgustavobarros/skills --skill bugpool
+```
+*(Ou pelo link completo: `npx skills add https://github.com/artgustavobarros/skills --skill bugpool`)*
+
+### Instalar globalmente na sua máquina (disponível em todos os projetos):
+```bash
+npx skills add artgustavobarros/skills --skill bugpool -g
+```
+
+### Listar todas as skills disponíveis neste repositório:
+```bash
+npx skills add artgustavobarros/skills --list
+```
+
 ---
 
 ## 📦 Skills Disponíveis
@@ -25,26 +49,22 @@ Orquestrador autônomo de revisão de Pull Requests e triagem contínua. Combina
 
 ---
 
-## 🚀 Como Instalar em Qualquer Projeto
+## 🛠️ Métodos Alternativos de Instalação
 
-### Opção 1: Via script instalador
-A partir da raiz deste repositório:
+### Via script instalador local:
 ```bash
 ./install.sh /caminho/para/seu/projeto
 ```
-*(Ou execute `./install.sh` diretamente na pasta do seu projeto).*
 
-### Opção 2: Cópia Manual
-Copie a pasta da skill para a raiz do seu projeto:
+### Cópia manual:
 ```bash
-# Para Antigravity / Claude Code:
 cp -r skills/bugpool /caminho/para/projeto/.agents/skills/
 cp commands/bugpool.md /caminho/para/projeto/.claude/commands/ 2>/dev/null || true
 ```
 
 ---
 
-## 🛠️ Filosofia deste Acervo
+## 🛡️ Filosofia deste Acervo
 1. **Sem Amarras de Ferramentas:** Nada de acoplamentos com MCPs específicos (Plane, context-mode, Jira, etc.). Tudo usa ferramentas padrão (`git`, `gh`).
 2. **Respeito ao Humano:** A IA auxilia e limpa o trabalho repetitivo, mas decisões de arquitetura e conversas com humanos são sempre preservadas.
 3. **Custo Consciente:** Os modelos mais caros só são chamados quando estritamente necessários.
