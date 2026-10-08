@@ -1,381 +1,480 @@
 ---
 name: bugpool
 description: >
-  Multi-perspective PR review swarm and autonomous triage loop. Spawns a cheap-first
-  reviewer panel (Router in Haiku -> Lenses in Sonnet -> Escalation in Opus), performs
-  Two-Pass Review (Critical vs Informational), checks Scope Drift and SIZE-1..6 complexity,
-  triages findings and existing GitHub review threads into actionable/nit/ambiguous,
-  auto-fixes with local typecheck safety gates, resolves completed threads, and leaves
-  only ambiguous items flagged for the human author. Use for /bugpool, PR swarm review,
-  review triage, or automated PR cleanup.
-version: "1.1.0"
+  Self-review swarm for your own GitHub pull request. A router reviewer screens the
+  diff and delegates to specialist lenses (architecture, QA, stack, security); findings
+  are triaged together with existing bot review threads. Clear, localised fixes are
+  applied locally behind a typecheck/lint/test gate and pushed once per round; nits go
+  to a single sticky summary; only ambiguous items are posted for the author. Threads
+  with human participants are never touched. Use for /bugpool, PR self-review, or
+  automated cleanup of bot review threads.
+argument-hint: "[pr-number|pr-url] [--review-only] [--allow-foreign]"
+disable-model-invocation: true
+license: TBD
+metadata:
+  version: "2.0.0"
 ---
 
-# Bugpool: Multi-Perspective PR Swarm & Autonomous Triage Loop
+# Bugpool
 
-`bugpool` orchestrates a complete PR review and triage lifecycle. It blends cost-aware multi-perspective review with strict code quality principles (Two-Pass Review, Scope Drift Detection, SIZE-1..6 Complexity Rubric, Constructive Friction) and an autonomous triage engine that auto-fixes and resolves clear issues, never touches human discussions, and loops until only ambiguous architectural decisions remain for the author.
-
----
-
-## Bot Identifier — REQUIRED on Every Posted Comment
-
-Every comment posted to GitHub (inline review comments, thread replies, sticky PR summary) must begin with the bot-identifier header:
-
-```markdown
-> [!NOTE]
-> 🤖 Automated comment by **Bugpool** — not written by a human
-```
-
-Never skip this header. It is the load-bearing indicator that separates automated bot comments from human discussions.
-
----
-
-## Model Roster & Substitution Ladder
-
-Bugpool uses a **Cheap-First** model ladder to minimize API token cost while ensuring high reasoning depth when warranted:
-
-| Role | Bugpool Target (Anthropic) | Antigravity / Gemini Equivalent | Full Model ID | Purpose |
-| :--- | :--- | :--- | :--- | :--- |
-| **Router (Cheap Entry)** | `haiku` | `flash` / `flash_lite` | `claude-haiku-4-5` | Pass 1 screening, blast radius, scope drift |
-| **Delegated Lenses** | `sonnet` | `pro` | `claude-sonnet-5-5` | Deep lens analysis (Arch, QA, Stack, Security) |
-| **Escalation / Tie-breaker**| `opus` | `pro` (high reasoning) | `claude-opus-5-5` | Critical conflicts & high-risk security disputes |
-
-*Ladder policy:*
-1. The **Router** runs on the cheapest model (`haiku` / `flash`).
-2. **Specialist Lenses** run on `sonnet` / `pro` (the model tier before Opus).
-3. Critical disagreements on security or data integrity escalate to `opus` / `pro`.
-
----
-
-## Core Analytical Principles (Yooh Methodology)
-
-Every review in Bugpool follows these four analytical principles:
-
-### 1. Two-Pass Review
-- **Pass 1 — Critical (Blockers Only):**
-  - **Security:** Auth, input validation, secrets in code, injection, IDOR.
-  - **Reliability:** Error handling, safe migrations, race conditions, crashes.
-  - **Correctness:** Logic bugs, edge cases, wrong types, broken contracts.
-  - **LLM Boundaries:** If code is AI-generated, actively verify against hallucinated APIs, non-existent methods, and invalid signatures.
-  *(If MUST FIX blocker items are found in Pass 1, stop and flag immediately — never waste tokens on style while correctness is broken).*
-- **Pass 2 — Informational (Quality & Architecture):**
-  Only runs if Pass 1 is clean or acknowledged:
-  - **Maintainability & Comprehension:** Readability, naming, long-term maintenance cost.
-  - **Consistency:** Adherence to project patterns, framework standards.
-  - **Performance:** N+1 queries, missing indexes, hydration mismatch, memory leaks.
-  - **Tests:** Coverage of edge cases, test readability.
-  - **Complexity & Size:** Evaluated via the SIZE-1..6 rubric below.
-
-### 2. The SIZE-1..6 Complexity Rubric
-Lenses must evaluate changed code against these objective size checks:
-- **SIZE-1 (Function Length):** Functions exceeding ~50 lines without clear justification.
-- **SIZE-2 (Nesting Depth):** Control flow nested deeper than 3 levels (favor early returns/guard clauses).
-- **SIZE-3 (Parameter Explosion):** Functions taking more than 3 positional parameters (favor typed options objects).
-- **SIZE-4 (Boolean Flag Arguments):** Functions taking boolean flags to branch behavior (favor separate, well-named functions).
-- **SIZE-5 (File Bloat):** New or modified files exceeding ~300-400 lines without separation of concerns.
-- **SIZE-6 (God Abstractions):** Classes or modules taking on multiple unrelated responsibilities.
-
-### 3. Constructive Friction
-Before emitting any review finding, the reviewer must check:
-- Is this concrete and specific (exact code snippet, exact behavior)?
-- Is it actionable (does the author know exactly what to change)?
-- Is it backed by evidence from the code (`file:line`), not hunches or personal taste?
-- Have I checked for false positives?
-*(Avoid bikeshedding — approve with comments whenever possible, and never block on nits).*
-
-### 4. Scope Drift Detection
-Compare the actual file diff against the PR title and description:
-- Did the PR modify files unrelated to the stated goal?
-- Are drive-by refactorings mixed into a targeted bugfix?
-- If drift is detected, flag it in the summary and suggest splitting if significant.
-
----
-
-## Workflow Overview
+Bugpool reviews a pull request before a human reviewer spends time on it. It
+fixes what is clearly fixable, keeps nits out of the PR, and posts only the
+items that need the author's judgement. It loops until nothing autonomous is
+left, or until the round cap.
 
 ```
-       /bugpool [PR]
-             │
-             ▼
-   ┌─────────────────────────────────────────────────────────────────┐
-   │ 1. RECON & SCOPE DRIFT                                          │
-   │    • Extrai diff, commits, título e corpo do PR via gh CLI      │
-   │    • Detecta Scope Drift (o PR fez mais do que prometeu?)       │
-   └─────────────────────────────────┬───────────────────────────────┘
-                                     │
-                                     ▼
-   ┌─────────────────────────────────────────────────────────────────┐
-   │ 2. PAINEL DE REVISORES (Cheap-First Router)                     │
-   │    • Router (Haiku): Pass 1 Critical + blast radius             │
-   │    • Se pequeno (<100 linhas, baixo risco): Router fecha direto │
-   │    • Se complexo: delega Lentes em Sonnet (Arch, QA, Stack, Sec)│
-   │    • Conflito crítico? ──▶ Escala para Opus                     │
-   └─────────────────────────────────┬───────────────────────────────┘
-                                     │
-                                     ▼
-   ┌─────────────────────────────────────────────────────────────────┐
-   │ 3. TRIAGEM & FILTRO DE IMUNIDADE HUMANA                         │
-   │    • Puxa todas as review threads abertas via GraphQL           │
-   │    • 🛑 REGRA DE OURO: Humano participou? ──▶ IMUNE (Não toca!) │
-   │    • Bot threads & achados:                                     │
-   │        - NIT ───────▶ Responde justificativa técnica e resolve  │
-   │        - ACTIONABLE ▶ Fila de correção local                    │
-   │        - AMBIGUOUS ─▶ Deixa aberto p/ Arthur                    │
-   └─────────────────────────────────┬───────────────────────────────┘
-                                     │
-                                     ▼
-   ┌─────────────────────────────────────────────────────────────────┐
-   │ 4. AUTO-FIX LOOP COM SAFETY GATE                                │
-   │    • Aplica correção cirúrgica no código                        │
-   │    • 🛡️ SAFETY GATE: Roda pnpm typecheck local                  │
-   │        - Passou? ──▶ git commit + push + responde + resolve     │
-   │        - Falhou? ──▶ git checkout (rollback) + vira Ambíguo     │
-   └─────────────────────────────────┬───────────────────────────────┘
-                                     │
-                                     ▼
-   ┌─────────────────────────────────────────────────────────────────┐
-   │ 5. STICKY SUMMARY & HANDOFF                                     │
-   │    • Atualiza 1 único comentário no PR (Quality Score 0-100)    │
-   │    • Apresenta no terminal apenas os itens ambíguos             │
-   └─────────────────────────────────────────────────────────────────┘
+ context ─▶ state & preconditions ─▶ review panel ─▶ triage ─▶ auto-fix ─▶ publish ─▶ score & sticky
+    ▲                                                                                     │
+    └──────────────── next round (diff of bugpool's own fixes only, max 3) ◀──────────────┘
 ```
 
----
+Where each item ends up:
 
-## Detailed Step-by-Step Instructions
+| Item                              | Destination                                                 |
+|-----------------------------------|-------------------------------------------------------------|
+| New finding, ACTIONABLE/PROMOTED  | fixed locally → gate → commit → pushed (not posted)         |
+| New finding, NIT                  | sticky summary only                                         |
+| New finding, AMBIGUOUS            | one inline comment in a single PR review                    |
+| Bot thread, ACTIONABLE/PROMOTED   | fixed → pushed → reply with SHA → resolved                  |
+| Bot thread, NIT                   | reply with reason → resolved                                |
+| Bot thread, AMBIGUOUS             | left open, listed in the report                             |
+| Any thread with a human in it     | untouched, listed in the report                             |
 
-### Step 1: Detect PR, Gather Context & Scope Drift
+## Non-negotiable rules
 
-If `$ARGUMENTS` is provided, parse it as a PR number or URL. Otherwise, detect the PR for the current branch:
+1. **Bot header.** Every body posted to GitHub (review, inline comment, reply,
+   sticky) starts with:
+   ```markdown
+   > [!NOTE]
+   > 🤖 Automated comment by **Bugpool** — not written by a human
+   ```
+2. **Human immunity.** If any comment in a thread is human (see *Provenance* in
+   Step 4), never edit code for it, never reply to it, never resolve it.
+3. **No local writes without verified preconditions.** Every file edit, `reset`,
+   `clean`, commit or push requires the Step 2 preconditions, re-checked
+   immediately before each fix.
+4. **Reply before resolve.** Resolve a thread only after a reply to it was posted
+   successfully. Post replies that reference a commit only after that commit was
+   pushed.
+5. **Comments only.** Every review bugpool posts uses event `COMMENT`. Bugpool
+   never approves a PR or blocks it on GitHub.
+6. **When in doubt, defer.** An unclear provenance counts as human. An unclear
+   classification counts as AMBIGUOUS. A doubt about whether a fix is safe means
+   no fix.
 
-```bash
-gh pr view --json number,url,title,body,headRefName,baseRefName,headRefOid,state \
-  --jq '{number, url, title, body, base: .baseRefName, head_sha: .headRefOid, state}'
+## Narration
+
+Before every step, and before any action that may take more than a few
+seconds, print one line: `[bugpool] <step> — <what and why>`. Examples:
+
+```
+[bugpool] context — PR #42 is on another branch, running gh pr checkout
+[bugpool] preconditions — working tree not clean, continuing as review-only
+[bugpool] review — router delegated security + qa on 3 files
+[bugpool] fix — 2/3 gate passed (pnpm typecheck, lint, vitest related), committed 1a2b3c4
 ```
 
-If PR state is `MERGED` or `CLOSED`, stop immediately.
+Write narration and the final report in the user's language. Comments posted to
+GitHub follow the language of the PR description.
 
-Gather diff and commits:
-```bash
-git diff <base>...HEAD --name-only
-git diff <base>...HEAD
-git log <base>...HEAD --oneline
-```
+## Roles and models
 
-**Scope Drift Evaluation:**
-Compare files changed against PR title and description:
-- Flag any modified file that has no clear relation to the PR's stated objective.
-- Note if a bugfix expanded into an unannounced refactor.
+Dispatch every reviewer with the **Agent tool and an explicit `model`**. Never
+run the review inline on the session model: the ladder exists to control cost
+and to give each reviewer an independent context.
 
----
+| Role        | Model    | Job                                                          |
+|-------------|----------|--------------------------------------------------------------|
+| Router      | `sonnet` | full Pass 1 review, danger grade, delegation plan            |
+| Lenses      | `sonnet` | focused review of a delegated scope                          |
+| Escalation  | `opus`   | settles CRITICAL/HIGH disagreements and unclear auth/concurrency |
 
-### Step 2: Reviewer Panel (Router & Delegated Lenses)
+- If the harness rejects an alias, map by tier: router and lenses on the
+  harness's mid tier, escalation on its top tier. For example, Gemini-based
+  harnesses use `pro` and `pro` with high reasoning. Record the substitution in
+  the sticky summary.
+- **Never put the router on the cheapest tier (`haiku`, `flash`).** Cheap
+  runners skip steps often enough that the reruns cost more than they save, and
+  the router owns the critical pass.
+- **Only the orchestrator (you) dispatches agents.** Every agent prompt says:
+  "You are the sole reviewer for this scope. Do not launch other agents."
+- Run independent lenses in parallel: one message, several Agent calls.
 
-#### 2a. Router Pass (Model: `haiku` / `flash`)
-Dispatch the router with diff, commits, and PR context:
-- Read surrounding code context (~50 lines) before judging.
-- Run **Pass 1 (Critical)** checks (Security, Reliability, Correctness, LLM Boundaries).
-- Assess change danger and blast radius: `LOW`, `MEDIUM`, `HIGH`, `CRITICAL`.
-- If diff is small (<100 lines) and low danger, synthesize findings directly without delegating.
-- If diff >200 lines or touches auth, database schema, concurrency, or payments, output a `DELEGATION_PLAN`.
+## Step 0 — Parse arguments
+
+`$ARGUMENTS` may contain a PR number or URL and the flags `--review-only` and
+`--allow-foreign`. Without a PR, use the PR of the current branch.
+
+## Step 1 — Context
+
+Read `references/github-api.md` now. Use its recipes for every `gh` call.
+
+1. Get `<viewer>` (`gh api user`) and the PR fields: number, url, title, body,
+   author, headRefName, baseRefName, headRefOid, state, isCrossRepository.
+   - If there is no PR, run in **local mode**: diff against `origin/main` (or
+     `origin/master`), skip every GitHub write, and print the report only.
+   - If the state is `MERGED` or `CLOSED`, report it and stop.
+2. If the current branch is not `headRefName`: run `gh pr checkout <n>` only if
+   `git status --porcelain` is empty. Otherwise stop and ask the user to commit
+   or stash first, because diffing the wrong branch is useless.
+3. `git fetch origin <baseRefName> <headRefName>`. Collect the changed files,
+   the stat, the full diff and the log against `origin/<baseRefName>`. Never
+   diff against a local base branch, which may be stale.
+4. **Project context.** Read `AGENTS.md` and/or `CLAUDE.md` at the repo root (if
+   present) and the dependency manifest (`package.json`, `pyproject.toml`,
+   `go.mod`, …). If a project file points to bundled framework docs (for
+   example `node_modules/<pkg>/dist/docs/`), note that path for the reviewers.
+5. **Scope drift.** Compare the changed files and commits with the PR title and
+   body. List the files that have no clear relation to the stated goal, and
+   drive-by refactors inside a targeted fix. Record them for the summary; drift
+   is reported, never auto-fixed.
+
+## Step 2 — State and preconditions
+
+**2a. Idempotency.** Find the sticky summary authored by `<viewer>` and parse its
+state marker (`references/github-api.md` → *State marker*): round, reviewed
+SHA, fingerprints of already-posted findings. If HEAD equals the recorded SHA
+and no unresolved thread is newer than the sticky, print "nothing to do since
+<short sha>" and stop. Otherwise set `round = previous round + 1` (or 1).
+
+**2b. Auto-fix preconditions.** Auto-fix is enabled only if **all** of these
+hold:
+
+- `--review-only` was not passed;
+- `git status --porcelain` prints nothing;
+- the current branch equals `headRefName`;
+- `git rev-parse HEAD` equals `headRefOid`;
+- the PR author equals `<viewer>` and `isCrossRepository` is false, or
+  `--allow-foreign` was passed.
+
+If any check fails, continue in **review-only mode** and state which check
+failed in the narration, in the summary and in the report.
+
+**2c. Gate detection.** Build the local gate:
+
+| Lockfile                     | Runner |
+|------------------------------|--------|
+| `pnpm-lock.yaml`             | `pnpm` |
+| `yarn.lock`                  | `yarn` |
+| `bun.lock` / `bun.lockb`     | `bun`  |
+| `package-lock.json` or none  | `npm run` |
+
+From the `package.json` scripts, take whichever exist:
+
+- **typecheck:** `typecheck`, `type-check`, `tsc`, `check-types`
+- **lint:** `lint`, `check`
+- **test:** `test`
+
+For the test step, when the runner supports it, prefer a related-files run (for
+example `npx vitest related --run <files>`, `npx jest --findRelatedTests
+<files>`). Otherwise run the full `test` script and note its duration.
+
+A missing script is skipped, not counted as a failure. Without a
+`package.json`, use the check command that AGENTS.md or CLAUDE.md documents. If
+no command can be found, auto-fix is **disabled** ("no local gate"), and every
+ACTIONABLE item is handled as AMBIGUOUS.
+
+## Step 3 — Review panel
+
+In rounds ≥ 2, the panel reviews only `git diff <round_start_sha>..HEAD`, that
+is, bugpool's own fixes from the previous round.
+
+### 3a. Router
+
+Dispatch one router Agent (`model: sonnet`). Its prompt contains: the diff,
+changed files, commit log, PR title and body, the project context from Step 1,
+the *Reviewer contract* below, and these instructions:
+
+- Read at least 50 lines of surrounding code for every hunk before judging.
+- Do a complete **Pass 1** review: security, reliability, correctness, and LLM
+  boundaries (hallucinated APIs, non-existent methods, wrong signatures). Check
+  framework API usage against the installed version (types, bundled docs), not
+  against memory.
+- Grade danger as `LOW|MEDIUM|HIGH|CRITICAL`, then return a delegation plan:
 
 ```
 DELEGATION_PLAN:
 danger: <LOW|MEDIUM|HIGH|CRITICAL>
 confidence: <HIGH|MEDIUM|LOW>
 delegations:
-  - lens: <architecture|qa|stack|security> | scope: <files or "full"> | reason: <one line>
+- lens: <architecture|qa|stack|security> | scope: <files/hunks or "full"> | reason: <one line>
+(empty list if none)
 ```
 
-#### 2b. Delegated Lenses (Model: `sonnet` / `pro`)
-When delegated, run the selected lenses in parallel:
+**Objective triggers.** The plan must contain at least one delegation when the
+diff has **more than 150 changed lines**, or touches any of: auth or
+authorization, sessions, secrets or crypto, database schema or migrations,
+destructive writes, concurrency or shared mutable state, payments or billing,
+deploy/release/CI configuration. A sensitive area requires the `security` lens,
+scoped to those hunks.
 
-1. **`architecture` (Engineering Leadership Lens):**
-   - Maintainability, tech debt added vs paid down, bus factor, SIZE-5 (file bloat), SIZE-6 (God abstractions), design simplicity.
-2. **`qa` (QA & Testability Lens):**
-   - Edge cases, error recovery, missing Vitest/Playwright tests, boundary values, async race conditions.
-3. **`stack` (React & Next.js Best Practices Lens):**
-   - Audit `useEffect` (can it be derived during render or an event handler?).
-   - Server vs Client component boundaries, serialization errors, hydration mismatch risks.
-   - SIZE-1 (function length), SIZE-2 (nesting), SIZE-3 (parameters), SIZE-4 (flag arguments).
-   - Zod schema validation adherence.
-4. **`security` (Security & Data Integrity Lens):**
-   - IDOR, SSRF, SQL/Drizzle query vulnerabilities, auth/session leaks, unsafe database mutations.
+These triggers apply **whatever danger grade the router gave**, because the
+grade is the thing being checked. Below the triggers, an empty plan is the
+cheap path working as intended. If the router returns an empty plan despite a
+trigger, add the delegation yourself.
 
-**Escalation Rule (Model: `opus`):**
-If lenses produce conflicting evaluations on a CRITICAL/HIGH finding, or if high-risk auth/concurrency logic lacks clear consensus, dispatch an escalation agent on `opus` for final determination.
+### 3b. Lenses
 
-#### Structured Finding Format
-Each reviewer returns findings in structured syntax:
+Dispatch each delegation (`model: sonnet`), in parallel, with its scoped diff,
+the project context, and the *Reviewer contract*.
+
+- **architecture:** maintainability, tech debt added vs paid down, design
+  simplicity, coupling, SIZE-2 / SIZE-6.
+- **qa:** edge cases, error paths, boundary values, async races, and whether
+  the tests cover the change (in the project's test framework).
+- **stack:** a checklist derived from the detected stack (manifest and config
+  files). If React/Next.js is present, include: a necessity check on every
+  `useEffect` (could the value be derived during render, or handled in an event
+  handler?), server/client boundaries, serialization across the boundary,
+  hydration risks. Add SIZE-1, SIZE-3, SIZE-4, SIZE-5, and schema-validation
+  adherence when the project uses a validator. Do not emit framework findings
+  for frameworks that are not present.
+- **security:** IDOR, SSRF, injection (including ORM/query-builder misuse),
+  auth/session leaks, secrets, unsafe mutations, tenant isolation.
+
+Lenses that check SIZE rules read `references/size-rubric.md`.
+
+### 3c. Escalation
+
+If two reviewers disagree on a CRITICAL or HIGH finding, or high-risk
+auth/concurrency logic has no clear consensus, dispatch one Agent
+(`model: opus`). Scope it to the disputed hunks and both arguments, and adopt
+its determination. Cap: 2 escalations per round.
+
+### Reviewer contract (include in every reviewer prompt)
+
+Every finding must pass the constructive-friction checks: it is concrete (exact
+code, exact behaviour), actionable (the author knows what to change), backed by
+evidence at `file:line` rather than taste, and checked for false positives.
+Do not bikeshed.
+
+**Severity scale.** Use only these values:
+
+| Severity | Equivalent  | Use for                                                      |
+|----------|-------------|--------------------------------------------------------------|
+| CRITICAL | MUST FIX    | exploitable security hole, data loss, crash on a main path   |
+| HIGH     | MUST FIX    | correctness bug, reliability gap, unsafe migration, SIZE BLOCK |
+| MEDIUM   | SHOULD FIX  | performance, missing important test, smell, SIZE WARN        |
+| LOW      | NIT         | minor improvement, SIZE INFO, pre-existing issue             |
+| NIT      | NIT         | style, naming, wording                                       |
+
+**Pass tag.** `pass: 1` for security, reliability, correctness and LLM
+boundaries. `pass: 2` for maintainability, consistency, performance, tests and
+complexity.
+
+End the response with exactly:
+
 ```
 STRUCTURED_FINDINGS:
-- file: <path> | line: <number> | severity: <CRITICAL|HIGH|MEDIUM|LOW|NIT> | category: <category> | body: <concrete issue + suggestion with why>
+- file: <path> | line: <number|general> | severity: <CRITICAL|HIGH|MEDIUM|LOW|NIT> | pass: <1|2> | category: <category> | rule: <SIZE-n or -> | reviewer: <tag> | body: <issue · evidence · suggested fix · why>
+(or "(none)")
+
+OVERALL_SUMMARY:
+<one paragraph>
 ```
 
----
+### 3d. Synthesis
 
-### Step 3: Triage & Human Immunity Gate
+- Normalise any other vocabulary (for example "MUST FIX" → HIGH, or CRITICAL
+  for security/data loss; "SHOULD FIX" → MEDIUM).
+- Merge findings about the same concern within 5 lines of the same file into
+  one finding marked `convergent`, at the highest severity.
+- Drop findings whose fingerprint is already in the state marker.
 
-Fetch all unresolved review threads from GitHub:
+## Step 4 — Triage
 
-```bash
-gh api graphql -f query='
-  query($owner:String!, $repo:String!, $num:Int!) {
-    repository(owner:$owner, name:$repo) {
-      pullRequest(number:$num) {
-        reviewThreads(first:100) {
-          nodes {
-            id
-            isResolved
-            isOutdated
-            comments(first:20) {
-              nodes {
-                databaseId
-                author { login __typename }
-                body
-                path
-                line
-              }
-            }
-          }
-        }
-      }
-    }
-  }' -F owner=<owner> -F repo=<repo> -F num=<pr_number>
-```
+Fetch threads with the filtered query in `references/github-api.md` (unresolved,
+not outdated, bodies truncated to 1500 characters). Skip stale top-level bot
+reviews.
 
-#### The Golden Rule: Human Immunity
-Check every comment in each thread:
-- A comment is automated only if author is a known bot account (e.g. `[bot]`, `greptile`, `coderabbit`, `sonarcloud`) OR body contains `🤖 Automated comment by`.
-- **IF ANY COMMENT IS HUMAN:** The entire thread is marked **HUMAN**:
-  - **NEVER** auto-fix this thread.
-  - **NEVER** post an automated reply to this thread.
-  - **NEVER** resolve this thread.
-  - Defer completely for the human author.
+### Provenance
 
-#### Classification of Bot Threads & New Findings
-- **NIT:** Style, formatting, minor non-blocking suggestions.
-  - Reply with brief technical reason:
-    ```bash
-    gh api repos/<owner>/<repo>/pulls/<pr_number>/comments/<first_comment_id>/replies \
-      -X POST -F body="> [!NOTE]\n> 🤖 Automated comment by **Bugpool** — not written by a human\n\nResolved: Style nit / intentional pattern."
-    ```
-  - Resolve thread via GraphQL `resolveReviewThread`.
-- **ACTIONABLE:** Concrete, localized, high/critical confidence fix where change is unambiguous.
-  - Send to Step 4 (Auto-Fix Queue).
-- **AMBIGUOUS:** Involves product choices, architectural alternatives, or broad trade-offs.
-  - Keep thread OPEN and flag in final report.
+A comment is **automated** only if one of these holds:
 
----
+- (a) its author `__typename` is `Bot`;
+- (b) its author login ends in `[bot]` or matches the known review-bot list;
+- (c) its body carries the `🤖 Automated comment by` header **and** its author
+  is `<viewer>`. Bugpool and similar tools post through your own account.
 
-### Step 4: Auto-Fix Loop with Local Safety Gate
+Every other comment is **human**, including a comment by someone else that
+pastes the bot header. If provenance is unclear, treat the comment as human. A
+thread with at least one human comment is a **human thread**: defer it and
+leave it untouched.
 
-For each item in the **Actionable** queue:
+### Classification
 
-1. **Apply the patch:** Make minimal, localized edits to target file(s).
-2. **Execute Safety Gate:**
-   ```bash
-   pnpm typecheck || npm run typecheck
-   ```
-3. **Handle Result:**
-   - **PASSED:**
-     - Stage, commit, and push:
-       ```bash
-       git add <modified_files>
-       git commit -m "fix(review): address finding in <file>"
-       git push
-       ```
-     - Reply to thread with commit SHA and explanation.
-     - Resolve thread on GitHub.
-   - **FAILED (Type/Lint Error):**
-     - **Rollback immediately:**
-       ```bash
-       git checkout -- <modified_files>
-       ```
-     - Reclassify finding as **AMBIGUOUS** with note: *"Attempted automated fix, but local typecheck failed. Deferring to human."*
-     - Leave thread open.
+Classify every new finding and every all-automated thread. **ACTIONABLE**
+requires all four:
 
----
+1. the severity is HIGH or CRITICAL, or the finding is convergent;
+2. the fix is concrete: you know exactly what to change (a missing null check,
+   a forgotten `await`, a wrong variable, an off-by-one);
+3. the change is localised: one file, or a few tightly related edits;
+4. it needs no design decision, no new dependency, and no change of PR scope.
 
-### Step 5: Sticky Summary & Quality Score
+SIZE findings are never ACTIONABLE. Everything else falls into one of these,
+checked in order:
 
-Maintain exactly **one** sticky summary comment per PR with marker `<!-- bugpool-summary -->`. Find existing comment ID or create new:
+- **NIT:** LOW or NIT severity, style-only, speculative, duplicate, or already
+  addressed.
+- **PROMOTED:** there is exactly one sensible, reversible fix with no trade-off
+  (the "just do it" case). Handle it like ACTIONABLE.
+- **AMBIGUOUS:** a product choice, architectural alternatives, more than one
+  reasonable fix, or an unclear benefit. **Any doubt lands here.**
 
-```bash
-gh api "repos/{owner}/{repo}/issues/{pr_number}/comments" --paginate \
-  --jq '[.[] | select(.body | contains("<!-- bugpool-summary -->"))][0].id'
-```
+Before fixing a thread classified ACTIONABLE or PROMOTED whose
+`body_truncated` is true, refetch its full body.
 
-#### Quality Score Calculation (0–100)
-Calculate score across dimensions:
-- Security & Safety (30%)
-- Architecture & Simplicity (25%)
-- Code Quality & Types (25%)
-- Testability (20%)
-Deduct points for findings (Critical = -30, High = -15, Medium = -5, Nit = -1). Map score to grade: `A (90-100)`, `B (80-89)`, `C (70-79)`, `D (60-69)`, `F (<60)`.
+Without auto-fix (review-only or no gate), ACTIONABLE and PROMOTED new findings
+are posted with **Suggested fix**, and such bot threads stay open, listed as
+"fix available".
 
-#### Post or Update Sticky Comment
-Update via `PATCH` or create via `gh pr comment`:
+## Step 5 — Auto-fix
+
+Skip this step if auto-fix is disabled.
+
+**Queue order:** Pass 1 items first (CRITICAL before HIGH), then Pass 2. When
+the Pass 1 items are done, if any Pass 1 CRITICAL/HIGH item is still unfixed
+(its gate failed, or it is AMBIGUOUS), **do not auto-fix any Pass 2 item this
+round**. Report the Pass 2 items instead.
+
+For each queued item:
+
+1. Run `git status --porcelain`. If it prints anything, stop auto-fixing for the
+   run and report why.
+2. Record `pre=$(git rev-parse HEAD)`.
+3. Make the minimal edit. Do not touch unrelated code.
+4. Run the gate from Step 2c.
+5. **Pass:** `git add <files>` and
+   `git commit -m "fix(bugpool): <short description>"`. Record the SHA against
+   the item.
+6. **Fail:** `git reset --hard <pre>` then `git clean -fd`. This is safe only
+   because step 1 verified a clean tree. `clean` without `-x` keeps ignored
+   files such as `.env` and `node_modules`. Reclassify the item as AMBIGUOUS
+   with the note "automated fix attempted, local gate failed: <first error
+   line>".
+
+## Step 6 — Publish
+
+Skip all GitHub writes in local mode.
+
+1. **Push once.** If any fix was committed this round, run one `git push`. If it
+   fails, do not reply to or resolve any thread this round. Report the
+   unpushed commit SHAs and the error, then go to Step 7.
+2. **Bot threads.**
+   - Fixed: reply "Fixed in `<sha>` — <one line>", then resolve.
+   - NIT: reply "<intentional | out of scope | disagree> — <reason>", then
+     resolve.
+   - AMBIGUOUS: leave open.
+
+   Apply the reply-before-resolve rule from `references/github-api.md`.
+3. **New AMBIGUOUS findings** (plus the suggested fixes in review-only mode):
+   post them as **one** review with event `COMMENT` against the current HEAD,
+   using the inline format in `references/github-api.md`. Findings with
+   `line: general` go in the review body. If there is nothing to post, post no
+   review.
+
+## Step 7 — Score and sticky summary
+
+Read `references/quality-score.md`. Compute the dimension scores, the overall
+score, the grade and the verdict from the findings still open at the reviewed
+HEAD.
+
+Upsert the sticky comment with `references/github-api.md` → *Sticky summary*.
+Body:
 
 ```markdown
 <!-- bugpool-summary -->
+<!-- bugpool-state {"v":1,"round":<N>,"sha":"<head sha>","fp":[<posted fingerprints, previous + new>]} -->
 > [!NOTE]
 > 🤖 Automated comment by **Bugpool** — not written by a human
 
-## 🎯 Bugpool Review Summary <sub>(@ <short_sha>)</sub>
+## 🎯 Bugpool — <APPROVE | APPROVE WITH NITS | REQUEST CHANGES> <sub>(round <N> @ <short sha>)</sub>
 
-**Verdict:** <APPROVE | APPROVE WITH NITS | REQUEST CHANGES>
-**Quality Score:** <Score>/100 (Grade <Grade>)
+<1–2 sentences explaining the verdict>
 
-### 📊 Review Overview
-| Reviewer Lens | Assessment |
-| :--- | :--- |
-| 🧭 Router (`haiku`) | <1-line assessment + blast radius> |
-| 🏛️ Architecture (`sonnet`) | <1-line assessment> |
-| 🧪 QA & Tests (`sonnet`) | <1-line assessment> |
-| ⚡ React / Stack (`sonnet`) | <1-line assessment> |
-| 🔒 Security (`sonnet`) | <1-line assessment> |
+**Quality Score:** <score line from references/quality-score.md>
+<if review-only:> **Mode:** review-only — <reason>
 
-<if scope_drift_detected>
+| Reviewer | Assessment |
+| --- | --- |
+| 🧭 router (<model>) | <1 line + danger grade + what it delegated> |
+<one row per reviewer that actually ran this round; omit the others>
+
+<if scope drift:>
 > [!WARNING]
-> **Scope Drift Detected:** <brief explanation of drift vs PR title/body>
-</if>
+> **Scope drift:** <stated goal> vs <unrelated files/changes>
 
-### 🛠️ Actions Taken
-- **Auto-fixed & Resolved:** <count> threads (commits: `<sha1>`, `<sha2>`)
-- **Nits Resolved:** <count> threads
-- **Human Threads Untouched:** <count> threads
-- **Ambiguous Pending for Author:** <count> items
+### Actions
+- **Auto-fixed:** <n> (<sha list>)
+- **Bot threads resolved as nits:** <n>
+- **Human threads untouched:** <n>
+- **Ambiguous for the author:** <n> (see inline review)
 
-<details>
-<summary>📜 History of Prior Rounds</summary>
+<details><summary>Nits (<n>)</summary>
 
-- round <N> @ <sha> — <verdict>
+- `<file:line>` — <one line>
 </details>
 
----
-*Cleaned and verified by Bugpool*
+<details><summary>Previous rounds (<n>)</summary>
+
+- round <N-1> @ <short sha> — <verdict>, <score>: <one-line disposition>
+</details>
 ```
 
----
+To build the history, take the previous sticky's header line, collapse it to
+one line, and put it on top of the previous history list. Do not carry the old
+body verbatim.
 
-### Step 6: Terminal Output for the Human Author
+## Step 8 — Loop
 
-Finish execution by printing a concise, actionable report directly in the chat:
+Start another round (back to Step 2b, with `round_start_sha` = the HEAD before
+this round's fixes) only if **all** of these hold:
 
-```markdown
-### 🦹 Bugpool Triage Complete
+- this round pushed at least one fix;
+- the run is not review-only;
+- `round < 3`.
 
-- **PR:** #<number> (<title>)
-- **Quality Score:** <Score>/100 (Grade <Grade>)
-- **Resolved automatically:** <n> actionable items (committed & pushed)
-- **Nits resolved:** <n> threads
+Otherwise stop. Items still ACTIONABLE when the cap is reached are reported as
+AMBIGUOUS.
 
----
+## Step 9 — Terminal report
 
-#### ⚠️ Itens que precisam da sua decisão (Ambíguos & Humanos):
-1. **[Human Thread]** `src/foo.ts:42` — Comentário de @colega: "Precisamos dessa mutation aqui?"
-2. **[Ambiguous]** `src/bar.ts:110` — Sugestão de refatoração para cache global (envolve decisão de arquitetura).
-
-Todas as outras pendências foram corrigidas, validadas no typecheck e resolvidas no GitHub!
 ```
+### 🦹 Bugpool — PR #<n> (<title>)
+Score <score>/100 (<grade>) · verdict <verdict> · <rounds> round(s) · mode <auto-fix | review-only: reason>
+
+Threads fetched: <T> = resolved <r> + fixed <f> + deferred <d>   ← must add up
+New findings: fixed <a> · nits <b> · posted as ambiguous <c>
+
+Needs your decision:
+1. [human]     src/foo.ts:42 — @reviewer: "<short quote>"
+2. [ambiguous] src/bar.ts:110 — <one-line reason>
+3. [gate fail] src/baz.ts:7 — <first error line>
+```
+
+The counts must reconcile: every fetched thread ends in exactly one bucket.
+
+## Degradation
+
+- **`gh` not authenticated:** stop and tell the user to run `gh auth login`.
+- **Agent tool unavailable:** perform the router pass yourself, mark the summary
+  "degraded: single reviewer", and do not claim lens coverage.
+- **A lens agent fails:** report the gap in the summary row, and do not invent
+  its conclusions. If it was the mandatory `security` lens, add a HIGH general
+  finding: "security lens unavailable for <scope>".
+- **No PR:** local mode (Step 1). Offer to post if the user provides a PR.
+- **User interrupts:** stop at the next step boundary and print the report.
+
+## References
+
+| File                          | Read when                                       |
+|-------------------------------|-------------------------------------------------|
+| `references/github-api.md`    | Step 1, before the first `gh` call             |
+| `references/size-rubric.md`   | in every lens prompt that checks SIZE rules     |
+| `references/quality-score.md` | Step 7                                          |
+
+Bugpool builds on [qa-swarm](https://github.com/pauldambra/dotfiles/tree/main/ai/skills/qa-swarm)
+and [review-triage](https://github.com/pauldambra/dotfiles/tree/main/ai/skills/review-triage)
+by Paul D'Ambra, and on the review methodology of
+[yooh-digital/ai-workflow](https://github.com/yooh-digital/ai-workflow).

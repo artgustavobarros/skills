@@ -30,22 +30,35 @@ npx skills add artgustavobarros/skills --list
 
 ## 📦 Skills Disponíveis
 
-### 1. [`bugpool`](./skills/bugpool/SKILL.md) — Multi-Perspective PR Swarm & Autonomous Triage
-> **Comando:** `/bugpool` | **Versão:** `1.1.0`
+### 1. [`bugpool`](./skills/bugpool/SKILL.md) — Auto-revisão de PR antes do humano
+> **Comando:** `/bugpool [pr-number|pr-url] [--review-only] [--allow-foreign]` | **Versão:** `2.0.0`
 
-Orquestrador autônomo de revisão de Pull Requests e triagem contínua. Combina o melhor de dois mundos: a esteira de execução ágil do Paul D'Ambra com a disciplina analítica de código da Yooh Digital.
+Revisa o **seu próprio** Pull Request antes de um revisor humano gastar tempo nele: corrige o que é claramente corrigível, mantém nits fora do PR e posta apenas o que exige decisão do autor.
 
-* **Two-Pass Review:** Pass 1 Crítico (Segurança, Confiabilidade, LLM Boundaries) + Pass 2 Informativo (Qualidade, Performance, Testes).
-* **Escada de Modelos Econômica:**
-  * Router: `haiku` (ou `flash`)
-  * Lentes de Especialistas: `sonnet` (ou `pro`)
-  * Escalada para Impasses: `opus` (ou `pro` c/ reasoning alto)
-* **Regras de Complexidade SIZE-1..6:** Auditoria de tamanho de funções, parâmetros, aninhamento e arquivos gigantes.
-* **Filtro de Fricção Construtiva:** Apontamentos cirúrgicos com `arquivo:linha`, sem bikeshedding.
-* **Detecção de Scope Drift:** Compara as mudanças reais com o objetivo declarado no PR.
-* **Imunidade Humana:** NUNCA comenta, comita ou fecha threads que tenham participação de humanos.
-* **Safety Gate Local:** Testa o código com `typecheck` antes de comitar. Se quebrar, faz rollback imediato e transfere para decisão humana.
-* **Sumário Sticky Único:** Um único comentário no PR com **Quality Score (0–100)** e histórico colapsado.
+* **Painel de revisores:** um router faz a passada crítica completa e delega lentes especialistas (`architecture`, `qa`, `stack`, `security`) quando necessário. Diffs com mais de 150 linhas ou que tocam áreas sensíveis (auth, migrations, concorrência, pagamentos, deploy) sempre recebem pelo menos uma lente, independentemente da nota do router.
+* **Escada de modelos:** router e lentes em `sonnet`, escalada em `opus` só para divergências CRITICAL/HIGH. O router nunca roda em `haiku`.
+* **Duas passadas:** a Passada 1 (segurança, confiabilidade, corretude, APIs alucinadas) tem prioridade. A Passada 2 (qualidade, testes, performance, complexidade SIZE-1..6) só é auto-corrigida quando não resta bloqueador.
+* **Contexto do projeto:** os revisores leem `AGENTS.md`/`CLAUDE.md` e checam APIs contra a versão instalada dos frameworks.
+* **Política de postagem:**
+  | Item | Destino |
+  | --- | --- |
+  | Acionável (claro e localizado) | corrigido localmente, commitado, push único por rodada |
+  | Nit | só no comentário-resumo |
+  | Ambíguo | comentário inline, numa única review |
+  | Thread de bot existente | corrigida e resolvida, ou respondida e resolvida, ou mantida aberta |
+  | Thread com qualquer humano | **nunca** tocada |
+* **Imunidade humana endurecida:** o cabeçalho `🤖 Automated comment by` só é confiável quando o comentário vem da sua própria conta. Na dúvida, o comentário conta como humano.
+* **Safety gate local:** detecta o gerenciador pelo lockfile e roda **typecheck, lint e testes, quando disponíveis** (testes relacionados quando o runner suporta). Sem gate, sem auto-fix. Em falha, rollback por SHA e o item vira ambíguo.
+* **Pré-condições:** o auto-fix só roda com árvore limpa, na branch do PR, com o HEAD igual ao do PR e em PRs seus (ou com `--allow-foreign`). Se alguma falhar, o run vira `--review-only`.
+* **Loop idempotente:** até 3 rodadas (a partir da segunda, revisa só os próprios fixes), com estado guardado no comentário-resumo. Rodar de novo no mesmo HEAD não posta nada.
+* **Resumo sticky único:** veredito, **Quality Score (0–100)** por dimensão, scope drift e histórico colapsado. A review sempre usa o evento `COMMENT`: o bugpool nunca aprova nem bloqueia o PR no GitHub.
+
+#### ⚠️ Breaking changes na 2.0.0
+- `commands/bugpool.md` foi removido: o próprio skill expõe `/bugpool`. Reinstale para limpar o arquivo antigo (`install.sh` remove sozinho; com `npx skills`, apague `.claude/commands/bugpool.md`).
+- O skill não é mais carregado automaticamente (`disable-model-invocation: true`): use `/bugpool` explicitamente.
+- O router passou de `haiku` para `sonnet`.
+- Achados novos não viram mais um comentário cada: só os ambíguos são postados.
+- O auto-fix exige as pré-condições acima. PRs de terceiros são review-only por padrão.
 
 ---
 
@@ -59,8 +72,16 @@ Orquestrador autônomo de revisão de Pull Requests e triagem contínua. Combina
 ### Cópia manual:
 ```bash
 cp -r skills/bugpool /caminho/para/projeto/.agents/skills/
-cp commands/bugpool.md /caminho/para/projeto/.claude/commands/ 2>/dev/null || true
+ln -s ../../.agents/skills/bugpool /caminho/para/projeto/.claude/skills/bugpool
 ```
+
+---
+
+## 🙏 Créditos
+
+O `bugpool` é derivado e adaptado de:
+- [`qa-swarm`](https://github.com/pauldambra/dotfiles/tree/main/ai/skills/qa-swarm) e [`review-triage`](https://github.com/pauldambra/dotfiles/tree/main/ai/skills/review-triage), de Paul D'Ambra: router com lentes, achados estruturados, resumo sticky, imunidade humana, responder antes de resolver.
+- [`yooh-digital/ai-workflow`](https://github.com/yooh-digital/ai-workflow): revisão em duas passadas, SIZE-1..6, fricção construtiva, scope drift, quality score.
 
 ---
 

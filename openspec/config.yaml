@@ -1,0 +1,9 @@
+schema: spec-driven
+
+context: |
+  Repositório público de agent skills (Claude Code, Antigravity, Cursor), instaláveis via `npx skills add`.
+  Cada skill vive em skills/<name>/SKILL.md (frontmatter YAML + markdown). Não há código de aplicação:
+  o "código" são as instruções do SKILL.md, o README e o install.sh.
+  Skills não dependem de MCPs específicos; usam apenas git e gh.
+  Skills são escritos em inglês; o README é em português.
+  Commits seguem Conventional Commits.
