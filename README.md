@@ -30,22 +30,31 @@ npx skills add artgustavobarros/skills --list
 
 ## 📦 Skills Disponíveis
 
-### 1. [`bugpool`](./skills/bugpool/SKILL.md) — Multi-Perspective PR Swarm & Autonomous Triage
-> **Comando:** `/bugpool` | **Versão:** `1.1.0`
+### 1. [`bugpool`](./skills/bugpool/SKILL.md) — Revisão de PR multi-lente com triagem segura
+> **Comando:** `/bugpool [pr-number|pr-url] [--local] [--base <ref>] [--dry-run] [--push]` | **Versão:** `3.0.0`
 
-Orquestrador autônomo de revisão de Pull Requests e triagem contínua. Combina o melhor de dois mundos: a esteira de execução ágil do Paul D'Ambra com a disciplina analítica de código da Yooh Digital.
+Revisa um Pull Request (ou a sua branch antes de abrir o PR), valida cada achado antes de reportar, tria threads de bots sem nunca tocar em conversas humanas e, opcionalmente, corrige o que é claro num worktree isolado.
 
-* **Two-Pass Review:** Pass 1 Crítico (Segurança, Confiabilidade, LLM Boundaries) + Pass 2 Informativo (Qualidade, Performance, Testes).
-* **Escada de Modelos Econômica:**
-  * Router: `haiku` (ou `flash`)
-  * Lentes de Especialistas: `sonnet` (ou `pro`)
-  * Escalada para Impasses: `opus` (ou `pro` c/ reasoning alto)
-* **Regras de Complexidade SIZE-1..6:** Auditoria de tamanho de funções, parâmetros, aninhamento e arquivos gigantes.
-* **Filtro de Fricção Construtiva:** Apontamentos cirúrgicos com `arquivo:linha`, sem bikeshedding.
-* **Detecção de Scope Drift:** Compara as mudanças reais com o objetivo declarado no PR.
-* **Imunidade Humana:** NUNCA comenta, comita ou fecha threads que tenham participação de humanos.
-* **Safety Gate Local:** Testa o código com `typecheck` antes de comitar. Se quebrar, faz rollback imediato e transfere para decisão humana.
-* **Sumário Sticky Único:** Um único comentário no PR com **Quality Score (0–100)** e histórico colapsado.
+* **Pré-passe determinístico:** lint (só check, nunca `--fix`), typecheck e testes relacionados aos arquivos alterados, em segundos. O resultado vira evidência para as lentes.
+* **Lentes core sempre ligadas:** `correctness-stack` e `security` rodam em todo review (`sonnet`). O router (`haiku`) só **adiciona** `qa` e `architecture`, nunca remove uma lente core. Achado CRITICAL não interrompe as outras lentes.
+* **Validação que tenta refutar:** achados MEDIUM+ são deduplicados e checados por um validador (`sonnet`; `opus` para segurança CRITICAL/HIGH). O que não tem prova em `arquivo:linha` é descartado.
+* **Modos:** PR, `--local` (sem PR, revisa branch + working tree) e `--dry-run` (sem escrita no GitHub, sem commit, sem editar arquivos).
+* **Auto-fix seguro:** recusa working tree sujo, corrige num git worktree isolado, gate = typecheck + lint check + testes relacionados, um commit único e push só com `--push`. Nunca roda `git checkout --`/`reset` na sua árvore.
+* **Imunidade humana:** thread com qualquer comentário humano nunca é corrigida, respondida nem resolvida. O cabeçalho do bot só conta se estiver no início do comentário.
+* **Resumo sticky único** com veredito e score (`100 − Σ deduções`), postado por script (quebras de linha reais).
+* **Loop limitado:** até 2 rodadas extras após fixes, parando quando não surge achado novo MEDIUM+.
+* **Avaliação embutida:** `evals/` traz o harness (bugs semeados + Claude headless) usado para medir o skill.
+
+| Cenário (seeds) | Revisor único (baseline) | bugpool 3.0.0 |
+| :--- | :--- | :--- |
+| dev (5) | 3/5 · US$0,19 | 5/5 · US$1,12 |
+| held-out (5) | 4/5 · US$0,17 | 5/5 · US$1,69 |
+| limpo (falsos positivos) | 0 | 0 |
+
+#### ⚠️ Breaking changes na 3.0.0
+- `commands/bugpool.md` foi removido: o próprio skill expõe `/bugpool` (o `install.sh` apaga o arquivo antigo; com `npx skills`, apague `.claude/commands/bugpool.md`).
+- Auto-fix não roda mais com working tree sujo e não dá push sem `--push`.
+- Achados novos aparecem no resumo sticky e no terminal; só threads existentes recebem respostas.
 
 ---
 
@@ -59,8 +68,16 @@ Orquestrador autônomo de revisão de Pull Requests e triagem contínua. Combina
 ### Cópia manual:
 ```bash
 cp -r skills/bugpool /caminho/para/projeto/.agents/skills/
-cp commands/bugpool.md /caminho/para/projeto/.claude/commands/ 2>/dev/null || true
+ln -s ../../.agents/skills/bugpool /caminho/para/projeto/.claude/skills/bugpool
 ```
+
+---
+
+## 🙏 Créditos
+
+O `bugpool` é derivado e adaptado de:
+- [`qa-swarm`](https://github.com/pauldambra/dotfiles/tree/main/ai/skills/qa-swarm) e [`review-triage`](https://github.com/pauldambra/dotfiles/tree/main/ai/skills/review-triage), de Paul D'Ambra: router com lentes, achados estruturados, resumo sticky, imunidade humana.
+- [`yooh-digital/ai-workflow`](https://github.com/yooh-digital/ai-workflow): revisão em duas passadas, fricção construtiva, scope drift, rubrica SIZE.
 
 ---
 

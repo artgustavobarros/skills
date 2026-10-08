@@ -1,381 +1,107 @@
 ---
 name: bugpool
 description: >
-  Multi-perspective PR review swarm and autonomous triage loop. Spawns a cheap-first
-  reviewer panel (Router in Haiku -> Lenses in Sonnet -> Escalation in Opus), performs
-  Two-Pass Review (Critical vs Informational), checks Scope Drift and SIZE-1..6 complexity,
-  triages findings and existing GitHub review threads into actionable/nit/ambiguous,
-  auto-fixes with local typecheck safety gates, resolves completed threads, and leaves
-  only ambiguous items flagged for the human author. Use for /bugpool, PR swarm review,
-  review triage, or automated PR cleanup.
-version: "1.1.0"
+  Multi-lens PR review and triage. Runs a deterministic pre-pass (lint check, typecheck,
+  related tests), always-on correctness and security lenses plus router-selected extras,
+  refute-first validation of findings, human-safe triage of GitHub review threads, and
+  optional auto-fix in an isolated worktree. Supports PR mode, --local (no PR needed) and
+  --dry-run (no GitHub or git writes). Use for /bugpool, PR review, review triage, or
+  reviewing a branch before opening a PR.
+version: "3.0.0"
+argument-hint: "[pr-number|pr-url] [--local] [--base <ref>] [--dry-run] [--push]"
 ---
 
-# Bugpool: Multi-Perspective PR Swarm & Autonomous Triage Loop
+# Bugpool
 
-`bugpool` orchestrates a complete PR review and triage lifecycle. It blends cost-aware multi-perspective review with strict code quality principles (Two-Pass Review, Scope Drift Detection, SIZE-1..6 Complexity Rubric, Constructive Friction) and an autonomous triage engine that auto-fixes and resolves clear issues, never touches human discussions, and loops until only ambiguous architectural decisions remain for the author.
+`<skill>` below means this skill's base directory. Lens prompts live in `<skill>/reference/lenses/`, report formats in `<skill>/reference/report-templates.md`, helpers in `<skill>/scripts/`.
 
----
-
-## Bot Identifier — REQUIRED on Every Posted Comment
-
-Every comment posted to GitHub (inline review comments, thread replies, sticky PR summary) must begin with the bot-identifier header:
-
-```markdown
-> [!NOTE]
-> 🤖 Automated comment by **Bugpool** — not written by a human
-```
-
-Never skip this header. It is the load-bearing indicator that separates automated bot comments from human discussions.
-
----
-
-## Model Roster & Substitution Ladder
-
-Bugpool uses a **Cheap-First** model ladder to minimize API token cost while ensuring high reasoning depth when warranted:
-
-| Role | Bugpool Target (Anthropic) | Antigravity / Gemini Equivalent | Full Model ID | Purpose |
-| :--- | :--- | :--- | :--- | :--- |
-| **Router (Cheap Entry)** | `haiku` | `flash` / `flash_lite` | `claude-haiku-4-5` | Pass 1 screening, blast radius, scope drift |
-| **Delegated Lenses** | `sonnet` | `pro` | `claude-sonnet-5-5` | Deep lens analysis (Arch, QA, Stack, Security) |
-| **Escalation / Tie-breaker**| `opus` | `pro` (high reasoning) | `claude-opus-5-5` | Critical conflicts & high-risk security disputes |
-
-*Ladder policy:*
-1. The **Router** runs on the cheapest model (`haiku` / `flash`).
-2. **Specialist Lenses** run on `sonnet` / `pro` (the model tier before Opus).
-3. Critical disagreements on security or data integrity escalate to `opus` / `pro`.
-
----
-
-## Core Analytical Principles (Yooh Methodology)
-
-Every review in Bugpool follows these four analytical principles:
-
-### 1. Two-Pass Review
-- **Pass 1 — Critical (Blockers Only):**
-  - **Security:** Auth, input validation, secrets in code, injection, IDOR.
-  - **Reliability:** Error handling, safe migrations, race conditions, crashes.
-  - **Correctness:** Logic bugs, edge cases, wrong types, broken contracts.
-  - **LLM Boundaries:** If code is AI-generated, actively verify against hallucinated APIs, non-existent methods, and invalid signatures.
-  *(If MUST FIX blocker items are found in Pass 1, stop and flag immediately — never waste tokens on style while correctness is broken).*
-- **Pass 2 — Informational (Quality & Architecture):**
-  Only runs if Pass 1 is clean or acknowledged:
-  - **Maintainability & Comprehension:** Readability, naming, long-term maintenance cost.
-  - **Consistency:** Adherence to project patterns, framework standards.
-  - **Performance:** N+1 queries, missing indexes, hydration mismatch, memory leaks.
-  - **Tests:** Coverage of edge cases, test readability.
-  - **Complexity & Size:** Evaluated via the SIZE-1..6 rubric below.
-
-### 2. The SIZE-1..6 Complexity Rubric
-Lenses must evaluate changed code against these objective size checks:
-- **SIZE-1 (Function Length):** Functions exceeding ~50 lines without clear justification.
-- **SIZE-2 (Nesting Depth):** Control flow nested deeper than 3 levels (favor early returns/guard clauses).
-- **SIZE-3 (Parameter Explosion):** Functions taking more than 3 positional parameters (favor typed options objects).
-- **SIZE-4 (Boolean Flag Arguments):** Functions taking boolean flags to branch behavior (favor separate, well-named functions).
-- **SIZE-5 (File Bloat):** New or modified files exceeding ~300-400 lines without separation of concerns.
-- **SIZE-6 (God Abstractions):** Classes or modules taking on multiple unrelated responsibilities.
-
-### 3. Constructive Friction
-Before emitting any review finding, the reviewer must check:
-- Is this concrete and specific (exact code snippet, exact behavior)?
-- Is it actionable (does the author know exactly what to change)?
-- Is it backed by evidence from the code (`file:line`), not hunches or personal taste?
-- Have I checked for false positives?
-*(Avoid bikeshedding — approve with comments whenever possible, and never block on nits).*
-
-### 4. Scope Drift Detection
-Compare the actual file diff against the PR title and description:
-- Did the PR modify files unrelated to the stated goal?
-- Are drive-by refactorings mixed into a targeted bugfix?
-- If drift is detected, flag it in the summary and suggest splitting if significant.
-
----
-
-## Workflow Overview
+## Invocation
 
 ```
-       /bugpool [PR]
-             │
-             ▼
-   ┌─────────────────────────────────────────────────────────────────┐
-   │ 1. RECON & SCOPE DRIFT                                          │
-   │    • Extrai diff, commits, título e corpo do PR via gh CLI      │
-   │    • Detecta Scope Drift (o PR fez mais do que prometeu?)       │
-   └─────────────────────────────────┬───────────────────────────────┘
-                                     │
-                                     ▼
-   ┌─────────────────────────────────────────────────────────────────┐
-   │ 2. PAINEL DE REVISORES (Cheap-First Router)                     │
-   │    • Router (Haiku): Pass 1 Critical + blast radius             │
-   │    • Se pequeno (<100 linhas, baixo risco): Router fecha direto │
-   │    • Se complexo: delega Lentes em Sonnet (Arch, QA, Stack, Sec)│
-   │    • Conflito crítico? ──▶ Escala para Opus                     │
-   └─────────────────────────────────┬───────────────────────────────┘
-                                     │
-                                     ▼
-   ┌─────────────────────────────────────────────────────────────────┐
-   │ 3. TRIAGEM & FILTRO DE IMUNIDADE HUMANA                         │
-   │    • Puxa todas as review threads abertas via GraphQL           │
-   │    • 🛑 REGRA DE OURO: Humano participou? ──▶ IMUNE (Não toca!) │
-   │    • Bot threads & achados:                                     │
-   │        - NIT ───────▶ Responde justificativa técnica e resolve  │
-   │        - ACTIONABLE ▶ Fila de correção local                    │
-   │        - AMBIGUOUS ─▶ Deixa aberto p/ Arthur                    │
-   └─────────────────────────────────┬───────────────────────────────┘
-                                     │
-                                     ▼
-   ┌─────────────────────────────────────────────────────────────────┐
-   │ 4. AUTO-FIX LOOP COM SAFETY GATE                                │
-   │    • Aplica correção cirúrgica no código                        │
-   │    • 🛡️ SAFETY GATE: Roda pnpm typecheck local                  │
-   │        - Passou? ──▶ git commit + push + responde + resolve     │
-   │        - Falhou? ──▶ git checkout (rollback) + vira Ambíguo     │
-   └─────────────────────────────────┬───────────────────────────────┘
-                                     │
-                                     ▼
-   ┌─────────────────────────────────────────────────────────────────┐
-   │ 5. STICKY SUMMARY & HANDOFF                                     │
-   │    • Atualiza 1 único comentário no PR (Quality Score 0-100)    │
-   │    • Apresenta no terminal apenas os itens ambíguos             │
-   └─────────────────────────────────────────────────────────────────┘
+/bugpool [<pr number|url>] [--local] [--base <ref>] [--dry-run] [--push]
 ```
 
----
-
-## Detailed Step-by-Step Instructions
-
-### Step 1: Detect PR, Gather Context & Scope Drift
-
-If `$ARGUMENTS` is provided, parse it as a PR number or URL. Otherwise, detect the PR for the current branch:
-
-```bash
-gh pr view --json number,url,title,body,headRefName,baseRefName,headRefOid,state \
-  --jq '{number, url, title, body, base: .baseRefName, head_sha: .headRefOid, state}'
-```
-
-If PR state is `MERGED` or `CLOSED`, stop immediately.
-
-Gather diff and commits:
-```bash
-git diff <base>...HEAD --name-only
-git diff <base>...HEAD
-git log <base>...HEAD --oneline
-```
-
-**Scope Drift Evaluation:**
-Compare files changed against PR title and description:
-- Flag any modified file that has no clear relation to the PR's stated objective.
-- Note if a bugfix expanded into an unannounced refactor.
-
----
-
-### Step 2: Reviewer Panel (Router & Delegated Lenses)
-
-#### 2a. Router Pass (Model: `haiku` / `flash`)
-Dispatch the router with diff, commits, and PR context:
-- Read surrounding code context (~50 lines) before judging.
-- Run **Pass 1 (Critical)** checks (Security, Reliability, Correctness, LLM Boundaries).
-- Assess change danger and blast radius: `LOW`, `MEDIUM`, `HIGH`, `CRITICAL`.
-- If diff is small (<100 lines) and low danger, synthesize findings directly without delegating.
-- If diff >200 lines or touches auth, database schema, concurrency, or payments, output a `DELEGATION_PLAN`.
-
-```
-DELEGATION_PLAN:
-danger: <LOW|MEDIUM|HIGH|CRITICAL>
-confidence: <HIGH|MEDIUM|LOW>
-delegations:
-  - lens: <architecture|qa|stack|security> | scope: <files or "full"> | reason: <one line>
-```
-
-#### 2b. Delegated Lenses (Model: `sonnet` / `pro`)
-When delegated, run the selected lenses in parallel:
-
-1. **`architecture` (Engineering Leadership Lens):**
-   - Maintainability, tech debt added vs paid down, bus factor, SIZE-5 (file bloat), SIZE-6 (God abstractions), design simplicity.
-2. **`qa` (QA & Testability Lens):**
-   - Edge cases, error recovery, missing Vitest/Playwright tests, boundary values, async race conditions.
-3. **`stack` (React & Next.js Best Practices Lens):**
-   - Audit `useEffect` (can it be derived during render or an event handler?).
-   - Server vs Client component boundaries, serialization errors, hydration mismatch risks.
-   - SIZE-1 (function length), SIZE-2 (nesting), SIZE-3 (parameters), SIZE-4 (flag arguments).
-   - Zod schema validation adherence.
-4. **`security` (Security & Data Integrity Lens):**
-   - IDOR, SSRF, SQL/Drizzle query vulnerabilities, auth/session leaks, unsafe database mutations.
-
-**Escalation Rule (Model: `opus`):**
-If lenses produce conflicting evaluations on a CRITICAL/HIGH finding, or if high-risk auth/concurrency logic lacks clear consensus, dispatch an escalation agent on `opus` for final determination.
-
-#### Structured Finding Format
-Each reviewer returns findings in structured syntax:
-```
-STRUCTURED_FINDINGS:
-- file: <path> | line: <number> | severity: <CRITICAL|HIGH|MEDIUM|LOW|NIT> | category: <category> | body: <concrete issue + suggestion with why>
-```
-
----
-
-### Step 3: Triage & Human Immunity Gate
-
-Fetch all unresolved review threads from GitHub:
-
-```bash
-gh api graphql -f query='
-  query($owner:String!, $repo:String!, $num:Int!) {
-    repository(owner:$owner, name:$repo) {
-      pullRequest(number:$num) {
-        reviewThreads(first:100) {
-          nodes {
-            id
-            isResolved
-            isOutdated
-            comments(first:20) {
-              nodes {
-                databaseId
-                author { login __typename }
-                body
-                path
-                line
-              }
-            }
-          }
-        }
-      }
-    }
-  }' -F owner=<owner> -F repo=<repo> -F num=<pr_number>
-```
-
-#### The Golden Rule: Human Immunity
-Check every comment in each thread:
-- A comment is automated only if author is a known bot account (e.g. `[bot]`, `greptile`, `coderabbit`, `sonarcloud`) OR body contains `🤖 Automated comment by`.
-- **IF ANY COMMENT IS HUMAN:** The entire thread is marked **HUMAN**:
-  - **NEVER** auto-fix this thread.
-  - **NEVER** post an automated reply to this thread.
-  - **NEVER** resolve this thread.
-  - Defer completely for the human author.
-
-#### Classification of Bot Threads & New Findings
-- **NIT:** Style, formatting, minor non-blocking suggestions.
-  - Reply with brief technical reason:
-    ```bash
-    gh api repos/<owner>/<repo>/pulls/<pr_number>/comments/<first_comment_id>/replies \
-      -X POST -F body="> [!NOTE]\n> 🤖 Automated comment by **Bugpool** — not written by a human\n\nResolved: Style nit / intentional pattern."
-    ```
-  - Resolve thread via GraphQL `resolveReviewThread`.
-- **ACTIONABLE:** Concrete, localized, high/critical confidence fix where change is unambiguous.
-  - Send to Step 4 (Auto-Fix Queue).
-- **AMBIGUOUS:** Involves product choices, architectural alternatives, or broad trade-offs.
-  - Keep thread OPEN and flag in final report.
-
----
-
-### Step 4: Auto-Fix Loop with Local Safety Gate
-
-For each item in the **Actionable** queue:
-
-1. **Apply the patch:** Make minimal, localized edits to target file(s).
-2. **Execute Safety Gate:**
-   ```bash
-   pnpm typecheck || npm run typecheck
-   ```
-3. **Handle Result:**
-   - **PASSED:**
-     - Stage, commit, and push:
-       ```bash
-       git add <modified_files>
-       git commit -m "fix(review): address finding in <file>"
-       git push
-       ```
-     - Reply to thread with commit SHA and explanation.
-     - Resolve thread on GitHub.
-   - **FAILED (Type/Lint Error):**
-     - **Rollback immediately:**
-       ```bash
-       git checkout -- <modified_files>
-       ```
-     - Reclassify finding as **AMBIGUOUS** with note: *"Attempted automated fix, but local typecheck failed. Deferring to human."*
-     - Leave thread open.
-
----
-
-### Step 5: Sticky Summary & Quality Score
-
-Maintain exactly **one** sticky summary comment per PR with marker `<!-- bugpool-summary -->`. Find existing comment ID or create new:
-
-```bash
-gh api "repos/{owner}/{repo}/issues/{pr_number}/comments" --paginate \
-  --jq '[.[] | select(.body | contains("<!-- bugpool-summary -->"))][0].id'
-```
-
-#### Quality Score Calculation (0–100)
-Calculate score across dimensions:
-- Security & Safety (30%)
-- Architecture & Simplicity (25%)
-- Code Quality & Types (25%)
-- Testability (20%)
-Deduct points for findings (Critical = -30, High = -15, Medium = -5, Nit = -1). Map score to grade: `A (90-100)`, `B (80-89)`, `C (70-79)`, `D (60-69)`, `F (<60)`.
-
-#### Post or Update Sticky Comment
-Update via `PATCH` or create via `gh pr comment`:
-
-```markdown
-<!-- bugpool-summary -->
-> [!NOTE]
-> 🤖 Automated comment by **Bugpool** — not written by a human
-
-## 🎯 Bugpool Review Summary <sub>(@ <short_sha>)</sub>
-
-**Verdict:** <APPROVE | APPROVE WITH NITS | REQUEST CHANGES>
-**Quality Score:** <Score>/100 (Grade <Grade>)
-
-### 📊 Review Overview
-| Reviewer Lens | Assessment |
+| Flag | Effect |
 | :--- | :--- |
-| 🧭 Router (`haiku`) | <1-line assessment + blast radius> |
-| 🏛️ Architecture (`sonnet`) | <1-line assessment> |
-| 🧪 QA & Tests (`sonnet`) | <1-line assessment> |
-| ⚡ React / Stack (`sonnet`) | <1-line assessment> |
-| 🔒 Security (`sonnet`) | <1-line assessment> |
+| *(none)* | PR mode on the current branch's PR |
+| `--local` | Review `<base>...HEAD` plus uncommitted/untracked changes. No GitHub calls. `--base` defaults to `origin/main` (or `main`) |
+| `--dry-run` | Review and report only. **No GitHub writes, no commits, no pushes, no file edits.** |
+| `--push` | Allow pushing the auto-fix commit to the PR branch. Without it, fixes stay on a local branch |
 
-<if scope_drift_detected>
-> [!WARNING]
-> **Scope Drift Detected:** <brief explanation of drift vs PR title/body>
-</if>
+## Hard rules
 
-### 🛠️ Actions Taken
-- **Auto-fixed & Resolved:** <count> threads (commits: `<sha1>`, `<sha2>`)
-- **Nits Resolved:** <count> threads
-- **Human Threads Untouched:** <count> threads
-- **Ambiguous Pending for Author:** <count> items
+- Never run `git checkout -- …`, `git reset --hard`, `git stash`, `git clean`, or any lint/format command with `--fix`/`--write` in the user's working tree.
+- Never auto-fix, reply to, or resolve a thread with any human comment (`scripts/threads.sh` marks it `"human": true`).
+- Every posted comment goes through `scripts/post.sh` (adds the bot header, sends the body from a file).
+- Report only validated findings with `file:line` evidence.
 
-<details>
-<summary>📜 History of Prior Rounds</summary>
+## Workflow
 
-- round <N> @ <sha> — <verdict>
-</details>
+Copy this checklist and tick it as you go:
 
----
-*Cleaned and verified by Bugpool*
+```
+- [ ] 1. Context
+- [ ] 2. Pre-pass
+- [ ] 3. Router
+- [ ] 4. Lenses
+- [ ] 5. Dedupe + validation
+- [ ] 6. Triage (PR mode)
+- [ ] 7. Auto-fix (not dry-run)
+- [ ] 8. Report
 ```
 
----
+### 1. Context
 
-### Step 6: Terminal Output for the Human Author
+- **PR mode**: `gh pr view <pr> --json number,title,body,state,baseRefName,headRefName,headRefOid`. If MERGED/CLOSED and not `--dry-run`, stop. `git fetch origin <baseRefName> <headRefName>`; base = `origin/<baseRefName>`. If `git rev-parse HEAD` ≠ `headRefOid`, run `<skill>/scripts/fix-worktree.sh create <headRefOid>` and use that path as the review root for every later step.
+- **Local mode**: review root = repo root, base = `--base` value; title/body = branch name + `git log --format=%s <base>..HEAD`.
+- Set `RUN=$TMPDIR/bugpool-$(git rev-parse --short HEAD)` and `mkdir -p $RUN`. Write the diff once: `git diff <base>...HEAD > $RUN/diff` (local mode: append `git diff HEAD`). Note changed line count.
 
-Finish execution by printing a concise, actionable report directly in the chat:
+### 2. Pre-pass
 
-```markdown
-### 🦹 Bugpool Triage Complete
+From the review root: `bash <skill>/scripts/prepass.sh <base> [--local] > $RUN/prepass.md`. Read it. Failing tests and lint diagnostics on changed lines are leads for the lenses, not automatic findings.
 
-- **PR:** #<number> (<title>)
-- **Quality Score:** <Score>/100 (Grade <Grade>)
-- **Resolved automatically:** <n> actionable items (committed & pushed)
-- **Nits resolved:** <n> threads
+### 3. Router (`haiku`)
 
----
+Spawn one Agent (`model: haiku`) with: "Read `<skill>/reference/lenses/router.md` and follow it. Repo: <review root>. Base: <base>. Diff: <diff path>. Pre-pass: <prepass path>. Title/body: …". Keep its SCOPE_DRIFT, DANGER and EXTRA_LENSES.
 
-#### ⚠️ Itens que precisam da sua decisão (Ambíguos & Humanos):
-1. **[Human Thread]** `src/foo.ts:42` — Comentário de @colega: "Precisamos dessa mutation aqui?"
-2. **[Ambiguous]** `src/bar.ts:110` — Sugestão de refatoração para cache global (envolve decisão de arquitetura).
+### 4. Lenses (`sonnet`, in parallel)
 
-Todas as outras pendências foram corrigidas, validadas no typecheck e resolvidas no GitHub!
-```
+In **one message**, spawn an Agent (`model: sonnet`) per lens: always `correctness-stack` and `security`, plus each lens in EXTRA_LENSES. Prompt: "Read `<skill>/reference/lenses/<lens>.md` and follow it exactly. Repo: … Base: … Diff: … Pre-pass: … Title/body: … Scope: …". Lenses are never skipped because another lens found a CRITICAL issue.
+
+### 5. Dedupe + validation
+
+1. Parse all `STRUCTURED_FINDINGS`. Merge findings with the same file, line within ±3, and the same defect; keep the highest severity and list contributing lenses. Give each an id (F1, F2, …).
+2. LOW/NIT: keep at most 5, not validated.
+3. MEDIUM+: in **one message**, spawn validators reading `<skill>/reference/lenses/validator.md`:
+   - each `security` finding rated CRITICAL/HIGH → its own Agent with `model: opus`;
+   - all other MEDIUM+ findings → batches of up to 8 per Agent with `model: sonnet`.
+4. Drop REJECTED. Mark PRE-EXISTING (reported, excluded from score). Use validated severities.
+
+### 6. Triage (PR mode only)
+
+1. `<skill>/scripts/threads.sh list <pr>`; count `human: true` threads as untouched and list them for the author.
+2. Bot threads: NIT/obsolete → (not dry-run) reply with a one-line technical reason via `scripts/post.sh reply`, then `scripts/threads.sh resolve <thread_id>`. Concrete fixable issue → add to the fix queue. Product/architecture choice → AMBIGUOUS.
+3. Validated findings: ACTIONABLE when severity ≥ MEDIUM, the fix is local (≤ 2 files) and unambiguous; otherwise AMBIGUOUS.
+
+### 7. Auto-fix (skip in `--dry-run`; skip in local mode unless the user asked for fixes)
+
+1. In the user's checkout: `<skill>/scripts/fix-worktree.sh check-clean`. Dirty → skip auto-fix and say so.
+2. Reuse the review worktree, or `<skill>/scripts/fix-worktree.sh create HEAD`.
+3. Spawn one Agent (`model: sonnet`) with `<skill>/reference/lenses/fixer.md`, the worktree path, and the ACTIONABLE list.
+4. If anything is FIXED: `fix-worktree.sh commit <wt> "fix(review): bugpool round <n>"`. With `--push`: `fix-worktree.sh push <wt> <headRefName>`, then reply on fixed bot threads with the SHA and resolve them. NOT_FIXED → AMBIGUOUS with the gate error.
+5. **Bounded loop**: re-run the `correctness-stack` lens on `git diff <old head>..<fix sha>` and validate. Repeat at most 2 extra rounds; stop as soon as a round adds no new validated MEDIUM+ finding.
+6. `fix-worktree.sh remove <wt>` unless the user wants to inspect it (the branch is kept).
+
+### 8. Report
+
+Score and templates: `<skill>/reference/report-templates.md`.
+- PR mode, not dry-run: write the summary to a temp file, `<skill>/scripts/post.sh sticky <pr> <file>` (updates the existing summary in place).
+- Always print the terminal report. End with `Agents: <n> · Rounds: <n>`.
+
+## Evaluation
+
+Benchmarks, seeded-bug manifests and the scorecard live in `<skill>/evals/` (`run-eval.sh <dev|clean|heldout> [--baseline]`). Run them after changing this skill; do not tune the skill to specific seeds.
+
+## Credits
+
+Builds on [qa-swarm](https://github.com/pauldambra/dotfiles/tree/main/ai/skills/qa-swarm) and [review-triage](https://github.com/pauldambra/dotfiles/tree/main/ai/skills/review-triage) by Paul D'Ambra (router + lenses, structured findings, sticky summary, human immunity) and on the review methodology of [yooh-digital/ai-workflow](https://github.com/yooh-digital/ai-workflow) (two-pass review, constructive friction, scope drift, SIZE rubric).
