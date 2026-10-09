@@ -12,7 +12,7 @@ and reports cost and wall time (subagents included). Nothing is pushed, committe
 - `run-eval.sh <scenario> [--baseline] [--label <name>] [--keep]` — builds the bench and runs
   `claude -p` (orchestrator `sonnet`, budget cap `BUGPOOL_EVAL_BUDGET`, default $3) with
   `git push/commit/reset/checkout`, `gh`, `Edit` and `Write` disallowed. `--baseline` runs one
-  generic single-reviewer prompt instead, for comparison. Output JSON goes to `runs/`.
+  generic single-reviewer prompt instead, for comparison. Output JSON goes to `runs/` (git-ignored).
 - `manifests/` — one JSON per scenario (create your own; see below).
 
 Each run spends real usage on your account. Keep `runs/` and manifests out of public repos when

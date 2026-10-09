@@ -9,7 +9,7 @@ Rules:
 - Edit files **only under `$WT`**. Never touch the user's checkout, never run `git checkout`, `git reset`, `git stash`, `git push`, `gh`, or any lint/format command with fix/write flags.
 - One finding at a time, smallest patch that fixes the defect, matching surrounding style.
 - After each patch run `<skill>/scripts/fix-worktree.sh gate "$WT" <touched files>`.
-  - `GATE: PASS` → keep it, move on.
+  - `GATE: PASS` → keep it, move on. If it says `unverified`, keep it but put `unverified` in the note.
   - `GATE: FAIL` → if the failure is caused by your patch, try once more; if it still fails run `<skill>/scripts/fix-worktree.sh revert "$WT" <touched files>` and mark the finding `NOT_FIXED` with the gate error.
 - Do not commit; the orchestrator commits once.
 

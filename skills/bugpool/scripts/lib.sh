@@ -44,7 +44,7 @@ run_typecheck() {
 
 # run_lint_check <files...>: lint/format check on the given files, no fixes.
 run_lint_check() {
-  [[ $# -gt 0 ]] || return 0
+  [[ $# -gt 0 ]] || return 127
   if has_dep ultracite; then
     npx --no-install ultracite check "$@"
   elif has_dep @biomejs/biome; then
@@ -60,7 +60,7 @@ run_lint_check() {
 
 # run_related_tests <files...>: unit tests related to the given files.
 run_related_tests() {
-  [[ $# -gt 0 ]] || return 0
+  [[ $# -gt 0 ]] || return 127
   if has_dep vitest; then
     npx --no-install vitest related --run --passWithNoTests "$@"
   else

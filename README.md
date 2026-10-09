@@ -31,7 +31,7 @@ npx skills add artgustavobarros/skills --list
 ## 📦 Skills Disponíveis
 
 ### 1. [`bugpool`](./skills/bugpool/SKILL.md) — Revisão de PR multi-lente com triagem segura
-> **Comando:** `/bugpool [pr-number|pr-url] [--local] [--base <ref>] [--dry-run] [--push]` | **Versão:** `3.0.0`
+> **Comando:** `/bugpool [pr-number|pr-url] [--local] [--base <ref>] [--dry-run] [--push]` | **Versão:** `3.0.1`
 
 Revisa um Pull Request (ou a sua branch antes de abrir o PR), valida cada achado antes de reportar, tria threads de bots sem nunca tocar em conversas humanas e, opcionalmente, corrige o que é claro num worktree isolado.
 
@@ -50,6 +50,9 @@ Revisa um Pull Request (ou a sua branch antes de abrir o PR), valida cada achado
 | dev (5) | 3/5 · US$0,19 | 5/5 · US$1,12 |
 | held-out (5) | 4/5 · US$0,17 | 5/5 · US$1,69 |
 | limpo (falsos positivos) | 0 | 0 |
+
+#### 3.0.1
+- Gate do auto-fix e pré-passe tratam checks indisponíveis na stack (exit 127) como `skipped`, não como falha. Se nenhum check rodou, o gate passa como `PASS (unverified)` e o fix leva `unverified` na nota.
 
 #### ⚠️ Breaking changes na 3.0.0
 - `commands/bugpool.md` foi removido: o próprio skill expõe `/bugpool` (o `install.sh` apaga o arquivo antigo; com `npx skills`, apague `.claude/commands/bugpool.md`).

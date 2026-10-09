@@ -7,7 +7,7 @@ description: >
   optional auto-fix in an isolated worktree. Supports PR mode, --local (no PR needed) and
   --dry-run (no GitHub or git writes). Use for /bugpool, PR review, review triage, or
   reviewing a branch before opening a PR.
-version: "3.0.0"
+version: "3.0.1"
 argument-hint: "[pr-number|pr-url] [--local] [--base <ref>] [--dry-run] [--push]"
 ---
 
